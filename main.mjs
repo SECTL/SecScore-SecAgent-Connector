@@ -1,4 +1,4 @@
-const DEFAULT_SERVER_URL = "http://127.0.0.1:8787";
+const DEFAULT_SERVER_URL = "https://secscore-api.sectl.cn";
 const SKILL_PATH = "skills/secscore";
 const PAGE_ID = "secscore";
 
