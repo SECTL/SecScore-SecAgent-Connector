@@ -23,6 +23,7 @@ export async function activate(api) {
   const devices = new Map();
   const counters = new Map();
   let registered = false;
+  let currentSession = null;
 
   const request = async (path, token, init = {}) => {
     if (!token) throw new Error("没有可用的 SECTL 登录态，请先在 SecScore 操作设置页登录");
@@ -36,12 +37,46 @@ export async function activate(api) {
     return payload;
   };
 
-  const currentSession = await api.getSectlSession().catch(() => null);
-  if (currentSession?.accessToken) {
-    const id = currentSession.userId || currentSession.email || "current";
-    accounts.set(id, { id, email: currentSession.email || "", name: currentSession.name || currentSession.email || "当前登录账号", accessToken: currentSession.accessToken, source: "current" });
-    selected.accountId = id;
-  }
+  const normalizeSession = async (session) => {
+    if (!session?.accessToken) return null;
+    const relayUrl = (process.env.SECTL_OFFICIAL_API_URL || "").replace(/\/$/, "");
+    const clientId = process.env.SECTL_OFFICIAL_CLIENT_ID || "";
+    const platformId = process.env.SECTL_OFFICIAL_PLATFORM_ID || clientId;
+    if (!relayUrl || !clientId) return session;
+    const introspection = await api.fetch(`${relayUrl}/auth/introspect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: session.accessToken, client_id: clientId }),
+      signal: AbortSignal.timeout(10000),
+    }).catch(() => null);
+    const introspectionPayload = introspection ? await introspection.json().catch(() => ({})) : {};
+    if (introspection?.ok && introspectionPayload?.active === true && introspectionPayload?.user_id) {
+      return { ...session, userId: session.userId || introspectionPayload.user_id, email: session.email || introspectionPayload.email, name: session.name || introspectionPayload.name };
+    }
+    const exchange = await api.fetch(`${relayUrl}/auth/oauth`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ access_token: session.accessToken, client_id: clientId, platform_id: platformId }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const exchangePayload = await exchange.json().catch(() => ({}));
+    if (!exchange.ok || !exchangePayload?.access_token) throw new Error(exchangePayload?.detail || "无法将 SECTL 登录态转换为官方 Relay 登录态");
+    return { accessToken: exchangePayload.access_token, userId: exchangePayload.user?.id, email: exchangePayload.user?.email, name: exchangePayload.user?.name };
+  };
+
+  const refreshCurrentSession = async () => {
+    const rawSession = await api.getSectlSession().catch(() => null);
+    const session = await normalizeSession(rawSession);
+    currentSession = session;
+    if (!session?.accessToken) return null;
+    const id = session.userId || session.email || "current";
+    const existing = accounts.get(id);
+    accounts.set(id, { id, email: session.email || "", name: session.name || session.email || "当前登录账号", accessToken: session.accessToken, source: existing?.source || "current" });
+    if (!selected.accountId) selected.accountId = id;
+    return session;
+  };
+
+  await refreshCurrentSession().catch(() => null);
 
   const accountView = (account) => ({ id: account.id, email: account.email, name: account.name, source: account.source });
   const activeAccount = (accountId) => {
@@ -124,12 +159,13 @@ export async function activate(api) {
 
   const callAction = async (action, args = {}) => {
     if (action === "get_state") {
+      await refreshCurrentSession().catch(() => null);
       const account = selected.accountId ? accounts.get(selected.accountId) : null;
       const classes = account ? (classesFor(account).length ? classesFor(account) : await loadClasses(account.id).catch(() => [])) : [];
       return { serverUrl: serverUrl(), accounts: [...accounts.values()].map(accountView), selectedAccountId: selected.accountId, selectedClassId: selected.classId, classes, hasCurrentSession: Boolean(currentSession?.accessToken) };
     }
     if (action === "oauth_login") {
-      const session = await api.sectlOAuthLogin();
+      const session = await normalizeSession(await api.sectlOAuthLogin());
       const id = session.userId || session.email || newId();
       accounts.set(id, { id, email: session.email || "", name: session.name || session.email || "SECTL 账号", accessToken: session.accessToken, source: "oauth" });
       selected.accountId = id;
