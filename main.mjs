@@ -19,7 +19,12 @@ function deterministicStudentId(name) {
 export async function activate(api) {
   const accounts = new Map();
   const classesByAccount = new Map();
-  const selected = { accountId: "", classId: "" };
+  const savedConfig = api.getConfig();
+  const selected = {
+    accountId: normalized(savedConfig.accountId),
+    classId: normalized(savedConfig.classId),
+  };
+  const saveSelection = () => api.setConfig({ accountId: selected.accountId, classId: selected.classId });
   const devices = new Map();
   const counters = new Map();
   let registered = false;
@@ -72,7 +77,11 @@ export async function activate(api) {
     const id = session.userId || session.email || "current";
     const existing = accounts.get(id);
     accounts.set(id, { id, email: session.email || "", name: session.name || session.email || "当前登录账号", accessToken: session.accessToken, source: existing?.source || "current" });
-    if (!selected.accountId) selected.accountId = id;
+    if (!selected.accountId || !accounts.has(selected.accountId)) {
+      selected.accountId = id;
+      selected.classId = "";
+    }
+    saveSelection();
     return session;
   };
 
@@ -84,6 +93,7 @@ export async function activate(api) {
     const account = accounts.get(id);
     if (!account) throw new Error("尚未选择 SecScore 账号，请先在设置页选择或登录账号");
     selected.accountId = id;
+    saveSelection();
     return account;
   };
   const classesFor = (account) => classesByAccount.get(account.id) || [];
@@ -93,6 +103,7 @@ export async function activate(api) {
     const item = classesFor(account).find((entry) => entry.id === id);
     if (!item) throw new Error("尚未选择班级，请先在 SecScore 操作设置页选择班级");
     selected.classId = id;
+    saveSelection();
     return { account, class: item };
   };
   const loadClasses = async (accountId) => {
@@ -102,6 +113,7 @@ export async function activate(api) {
     const value = Array.isArray(list) ? list : [];
     classesByAccount.set(account.id, value);
     if (!value.some((item) => item.id === selected.classId)) selected.classId = value[0]?.id || "";
+    saveSelection();
     return value;
   };
   const deviceFor = (accountId, classId) => {
@@ -177,6 +189,7 @@ export async function activate(api) {
       const account = activeAccount(args.account_id);
       selected.classId = "";
       const classes = await loadClasses(account.id);
+      saveSelection();
       return { classes, selectedAccountId: account.id, selectedClassId: selected.classId };
     }
     if (action === "list_classes") return { classes: await loadClasses(args.account_id) };
@@ -186,6 +199,7 @@ export async function activate(api) {
       const item = classes.find((entry) => entry.id === normalized(args.class_id));
       if (!item) throw new Error("找不到所选班级");
       selected.classId = item.id;
+      saveSelection();
       return { class: item, selectedAccountId: account.id, selectedClassId: item.id };
     }
     if (action === "refresh") {
@@ -197,6 +211,7 @@ export async function activate(api) {
       const id = normalized(args.account_id);
       if (id && accounts.get(id)?.source !== "current") accounts.delete(id);
       if (!accounts.has(selected.accountId)) { selected.accountId = [...accounts.keys()][0] || ""; selected.classId = ""; }
+      saveSelection();
       return callAction("get_state");
     }
     throw new Error(`未知的 SecScore 设置操作：${action}`);
