@@ -1,7 +1,7 @@
 # SecScore SecAgent Connector
 
-这是 SecAgent 侧的 SecScore 联动插件。它连接 SecScore 自动启动的本机 HTTP JSON 服务 `http://127.0.0.1:18791`，动态注册学生查询、加/扣分和撤销工具，并提供 SecScore Skill。
+这个插件直接连接 SecScore Sync Server，不连接本机 SecScore，也不创建本地数据库。
 
-SecScore 服务只监听 loopback，不依赖 SecScore 插件，也不需要在 SecAgent 中配置 MCP。SecScore 未启动时插件会保持等待并每 5 秒自动重试。
+安装后，SecAgent 设置页会出现“SecScore 操作”标签，可选择当前登录账号或通过 OAuth 登录其它账号，再选择账号加入的班级。基本积分工具 `add_score` 对 Agent 可见；同学列表、姓名搜索、分组和组员查询工具为隐藏工具，仅供需要时由宿主或 Skill 调用。
 
-安装时将 `secscore-connector-*.zip` 导入 SecAgent 插件管理器；开发打包命令为 `pnpm run build`。
+默认云端地址为 `http://127.0.0.1:8787`，可通过 SecAgent 进程环境变量 `SECSCORE_SYNC_SERVER_URL` 覆盖。所有查询和积分操作均携带 SECTL Bearer token，积分操作直接调用 `/v1/operations` 并等待云端响应。
