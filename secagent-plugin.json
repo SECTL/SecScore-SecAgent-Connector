@@ -4,6 +4,7 @@
   "name": "SecScore 云端操作",
   "version": "2.1.4",
   "main": "main.mjs",
+  "icon": "icon.svg",
   "permissions": ["agent.tools", "agent.skills", "agent.settings", "network.http"],
   "settingsPages": [
     { "id": "secscore", "title": "SecScore 操作", "description": "选择 SecScore 账号和班级" }
