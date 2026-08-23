@@ -5,7 +5,7 @@ description: 使用 SecScore 云端班级工具给同学加分或扣分
 
 # SecScore 操作
 
-使用前，用户需要在 SecAgent 设置中的“SecScore 操作”页选择账号和班级。账号默认使用当前 SECTL 登录账号，也可以在该页通过 OAuth 登录其它账号。
+插件启动时会自动读取当前 SECTL 登录态，并加载已保存的账号和班级；首次登录或需要切换多个账号/班级时，仍可在 SecAgent 设置中的“SecScore 操作”页完成选择。账号默认使用当前 SECTL 登录账号，也可以在该页通过 OAuth 登录其它账号。
 
 ## 给同学加减分
 

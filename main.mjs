@@ -1,6 +1,11 @@
 const DEFAULT_SERVER_URL = "https://secscore-api.sectl.cn";
 const SKILL_PATH = "skills/secscore";
 const PAGE_ID = "secscore";
+// SecScore requests must load the complete Skill before the model chooses a
+// tool. Keep the matcher tolerant of natural Chinese phrasing and English
+// product names, including 加分/减分/扣分 variants.
+const SCORE_AMOUNT_PATTERN = "(?:[+-]?(?:\\d+(?:\\.\\d+)?|[零〇一二两三四五六七八九十百千万亿]+))";
+const SKILL_AUTO_LOAD_PATTERN = new RegExp(`SecScore|Sec\\s*Score|积分|加(?:\\s*${SCORE_AMOUNT_PATTERN}\\s*)?分|加点|奖励(?:\\s*${SCORE_AMOUNT_PATTERN}\\s*)?分|减(?:\\s*${SCORE_AMOUNT_PATTERN}\\s*)?分|扣(?:\\s*${SCORE_AMOUNT_PATTERN}\\s*)?分|扣点|罚分|积分榜|积分查询`, "iu");
 
 const serverUrl = () => (process.env.SECSCORE_SYNC_SERVER_URL || process.env.SECSCORE_SYNC_API_URL || DEFAULT_SERVER_URL).replace(/\/$/, "");
 const newId = () => crypto.randomUUID();
@@ -85,8 +90,6 @@ export async function activate(api) {
     return session;
   };
 
-  await refreshCurrentSession().catch(() => null);
-
   const accountView = (account) => ({ id: account.id, email: account.email, name: account.name, source: account.source });
   const activeAccount = (accountId) => {
     const id = normalized(accountId) || selected.accountId;
@@ -110,7 +113,7 @@ export async function activate(api) {
     const account = activeAccount(accountId);
     const classes = await request("/v1/classes", account.accessToken);
     const list = Array.isArray(classes) ? classes : classes.classes;
-    const value = Array.isArray(list) ? list : [];
+    const value = (Array.isArray(list) ? list : []).filter((item) => item && typeof item === "object").map((item) => ({ ...item, id: normalized(item.id) })).filter((item) => item.id);
     classesByAccount.set(account.id, value);
     if (!value.some((item) => item.id === selected.classId)) selected.classId = value[0]?.id || "";
     saveSelection();
@@ -257,13 +260,32 @@ export async function activate(api) {
   api.registerTool({ name: "find_students", description: "按姓名搜索当前 SecScore 班级的同学。", hidden: true, inputSchema: { type: "object", additionalProperties: false, required: ["query"], properties: { query: { type: "string" }, account_id: { type: "string" }, class_id: { type: "string" } } } }, async (args) => (await findStudent(args)).matches);
   api.registerTool({ name: "list_groups", description: "列出当前 SecScore 班级的分组及每组人数。", hidden: true, inputSchema: { type: "object", additionalProperties: false, properties: { account_id: { type: "string" }, class_id: { type: "string" } } } }, async (args) => { const result = await listStudents({ ...args, limit: 2000 }); const groups = new Map(); for (const student of result.students) { const name = student.group_name || "未分组"; groups.set(name, (groups.get(name) || 0) + 1); } return [...groups.entries()].map(([name, count]) => ({ name, count })); });
   api.registerTool({ name: "list_group_members", description: "列出当前 SecScore 班级指定分组内的同学。", hidden: true, inputSchema: { type: "object", additionalProperties: false, required: ["group_name"], properties: { group_name: { type: "string" }, account_id: { type: "string" }, class_id: { type: "string" } } } }, async (args) => listStudents({ ...args, limit: 2000 }));
-  api.registerSkill(SKILL_PATH);
+  api.registerSkill(SKILL_PATH, SKILL_AUTO_LOAD_PATTERN);
   api.registerSettingsHandler(PAGE_ID, callAction);
   registered = true;
-  api.setStatus(`SecScore 云端工具已就绪（${accounts.size ? "已登录" : "等待登录"}）`);
+  let refreshPromise;
+  const refreshConnection = async () => {
+    if (refreshPromise) return refreshPromise;
+    refreshPromise = (async () => {
+      const session = await refreshCurrentSession();
+      if (!session?.accessToken || !selected.accountId) {
+        api.setStatus("SecScore 工具已加载，等待 SECTL 登录");
+        return;
+      }
+      const classes = await loadClasses(selected.accountId);
+      api.setStatus(`SecScore 已连接（${classes.length} 个班级，${registered ? "工具已就绪" : ""}）`);
+    })().catch((error) => {
+      api.setStatus(`SecScore 已加载但云端未连接：${error instanceof Error ? error.message : String(error)}`, "error");
+    }).finally(() => { refreshPromise = undefined; });
+    return refreshPromise;
+  };
+  await refreshConnection();
+  const timer = setInterval(() => { void refreshConnection(); }, 30_000);
+  timer.unref?.();
 
   return () => {
     if (!registered) return;
+    clearInterval(timer);
     for (const name of ["add_score", "list_students", "find_students", "list_groups", "list_group_members"]) api.unregisterTool(name);
     api.unregisterSkill("secscore");
     api.unregisterSettingsHandler(PAGE_ID);
